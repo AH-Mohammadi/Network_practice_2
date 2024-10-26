@@ -4,8 +4,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <fstream>
+#include <dirent.h>  // For directory operations
 #include <vector>
-#include <filesystem>
 
 #define PORT 8080
 
@@ -22,12 +22,10 @@ void handleClient(int client_socket) {
 
         if (command == "UPLOAD") {
             // Handle file upload
-            // Receive the filename
             read(client_socket, buffer, sizeof(buffer));
             std::string filename(buffer);
             std::ofstream outfile(filename, std::ios::binary);
 
-            // Read the file content
             while ((bytes_read = read(client_socket, buffer, sizeof(buffer))) > 0) {
                 outfile.write(buffer, bytes_read);
             }
@@ -63,18 +61,26 @@ void handleClient(int client_socket) {
             }
         } else if (command == "GET_FILE_LIST") {
             // List files in the current directory
-            std::vector<std::string> files;
-            for (const auto& entry : std::filesystem::directory_iterator(".")) {
-                files.push_back(entry.path().filename().string());
+            std::string fileList = "Files:\n";
+            struct dirent *entry;
+            DIR *dp = opendir(".");
+            if (dp == nullptr) {
+                std::cerr << "Could not open directory\n";
+                return;
             }
-            std::string fileList = "Files:\n" + std::accumulate(files.begin(), files.end(), std::string(),
-                [](std::string a, std::string b) { return std::move(a) + b + "\n"; });
+            while ((entry = readdir(dp))) {
+                if (entry->d_type == DT_REG) { // Only regular files
+                    fileList += entry->d_name;
+                    fileList += "\n";
+                }
+            }
+            closedir(dp);
             send(client_socket, fileList.c_str(), fileList.length(), 0);
         } else if (command == "SEARCH_FILE") {
             // Handle file search
             read(client_socket, buffer, sizeof(buffer));
             std::string filename(buffer);
-            if (std::filesystem::exists(filename)) {
+            if (access(filename.c_str(), F_OK) == 0) {
                 send(client_socket, "File found", 10, 0);
             } else {
                 send(client_socket, "File not found", 14, 0);
