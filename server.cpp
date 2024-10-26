@@ -4,107 +4,96 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <filesystem>
-#include <vector>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #define PORT 8080
 
 void handleUpload(int new_socket) {
-    char buffer[1024] = {0};
+    char filename[1024] = {0};
+    read(new_socket, filename, sizeof(filename));
 
-    // Receive filename
-    read(new_socket, buffer, sizeof(buffer));
-    std::string filename(buffer);
-
-    // Open the file to write
     std::ofstream outfile(filename, std::ios::binary);
     if (!outfile) {
         std::cerr << "Failed to create file: " << filename << "\n";
         return;
     }
 
-    // Receive file data
-    while (true) {
-        int bytes_read = read(new_socket, buffer, sizeof(buffer));
-        if (bytes_read <= 0) break;  // Exit on error or EOF
-        outfile.write(buffer, bytes_read);
+    char file_buffer[1024];
+    int bytes = 0;
+    while ((bytes = read(new_socket, file_buffer, sizeof(file_buffer))) > 0) {
+        outfile.write(file_buffer, bytes);
     }
 
-    std::cout << "File uploaded successfully: " << filename << "\n";
+    std::cout << "File uploaded successfully as " << filename << "\n";
     outfile.close();
 }
 
 void handleDownload(int new_socket) {
-    char buffer[1024] = {0};
+    char filename[1024] = {0};
+    read(new_socket, filename, sizeof(filename));
 
-    // Receive filename
-    read(new_socket, buffer, sizeof(buffer));
-    std::string filename(buffer);
-
-    // Check if file exists
-    if (!std::filesystem::exists(filename)) {
+    std::ifstream infile(filename, std::ios::binary);
+    if (!infile) {
         std::cerr << "File not found: " << filename << "\n";
         return;
     }
 
-    // Send file data
-    std::ifstream infile(filename, std::ios::binary);
-    while (infile.read(buffer, sizeof(buffer))) {
-        send(new_socket, buffer, infile.gcount(), 0);
-    }
-    // Send any remaining bytes
-    if (infile.gcount() > 0) {
-        send(new_socket, buffer, infile.gcount(), 0);
+    char file_buffer[1024];
+    int bytes = 0;
+    while ((bytes = infile.readsome(file_buffer, sizeof(file_buffer))) > 0) {
+        send(new_socket, file_buffer, bytes, 0);
     }
 
-    std::cout << "File downloaded successfully: " << filename << "\n";
+    std::cout << "File sent successfully: " << filename << "\n";
     infile.close();
 }
 
-void handleDelete(int new_socket) {
-    char buffer[1024] = {0};
+void handleFileList(int new_socket) {
+    const char* directoryPath = ".";
+    DIR* dir;
+    struct dirent* ent;
 
-    // Receive filename
-    read(new_socket, buffer, sizeof(buffer));
-    std::string filename(buffer);
+    if ((dir = opendir(directoryPath)) != nullptr) {
+        std::string fileList;
 
-    // Delete the file
-    if (std::filesystem::remove(filename)) {
-        std::cout << "File deleted successfully: " << filename << "\n";
-        const char* response = "File deleted successfully.";
-        send(new_socket, response, strlen(response), 0);
+        while ((ent = readdir(dir)) != nullptr) {
+            if (strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
+                fileList += ent->d_name;
+                fileList += "\n";
+            }
+        }
+
+        closedir(dir);
+        send(new_socket, fileList.c_str(), fileList.size(), 0);
+        std::cout << "Sent file list to client:\n" << fileList;
     } else {
-        std::cerr << "Failed to delete file: " << filename << "\n";
-        const char* response = "Failed to delete file.";
-        send(new_socket, response, strlen(response), 0);
+        std::cerr << "Could not open directory: " << directoryPath << "\n";
     }
-}
-
-void handleListFiles(int new_socket) {
-    std::string filesList;
-    for (const auto& entry : std::filesystem::directory_iterator(".")) {
-        filesList += entry.path().filename().string() + "\n";
-    }
-
-    send(new_socket, filesList.c_str(), filesList.size(), 0);
-    std::cout << "File list sent to client.\n";
 }
 
 void handleSearchFile(int new_socket) {
-    char buffer[1024] = {0};
+    char filename[1024] = {0};
+    read(new_socket, filename, sizeof(filename));
 
-    // Receive filename
-    read(new_socket, buffer, sizeof(buffer));
-    std::string filename(buffer);
+    std::ifstream infile(filename);
+    const char* response = infile ? "File found!" : "File not found!";
+    send(new_socket, response, strlen(response), 0);
+    infile.close();
+}
 
-    if (std::filesystem::exists(filename)) {
-        std::cout << "File found: " << filename << "\n";
-        const char* response = "File exists on the server.";
+void handleDeleteFile(int new_socket) {
+    char filename[1024] = {0};
+    read(new_socket, filename, sizeof(filename));
+
+    if (remove(filename) == 0) {
+        const char* response = "File deleted successfully.";
         send(new_socket, response, strlen(response), 0);
+        std::cout << "Deleted file: " << filename << "\n";
     } else {
-        std::cerr << "File not found: " << filename << "\n";
-        const char* response = "File does not exist on the server.";
+        const char* response = "Failed to delete file.";
         send(new_socket, response, strlen(response), 0);
+        std::cerr << "Error deleting file: " << filename << "\n";
     }
 }
 
@@ -122,7 +111,7 @@ int main() {
 
     // Set socket options
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-        std::cerr << "Set socket options error\n";
+        std::cerr << "setsockopt error\n";
         return -1;
     }
 
@@ -133,49 +122,43 @@ int main() {
 
     // Bind the socket
     if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        std::cerr << "Binding failed\n";
+        std::cerr << "Bind failed\n";
         return -1;
     }
 
     // Start listening
     if (listen(server_fd, 3) < 0) {
-        std::cerr << "Listening failed\n";
+        std::cerr << "Listen failed\n";
         return -1;
     }
 
-    std::cout << "Server is listening on port " << PORT << "\n";
-
     while (true) {
-        // Accept a new connection
+        std::cout << "Waiting for a connection...\n";
         if ((new_socket = accept(server_fd, (struct sockaddr*)&address, (socklen_t*)&addrlen)) < 0) {
-            std::cerr << "Accepting connection failed\n";
-            continue;
+            std::cerr << "Accept failed\n";
+            return -1;
         }
 
-        // Handle client commands
-        char buffer[1024] = {0};
-        read(new_socket, buffer, sizeof(buffer));
-        std::string command(buffer);
+        char command[1024] = {0};
+        read(new_socket, command, sizeof(command));
 
-        if (command == "UPLOAD") {
+        if (strcmp(command, "UPLOAD") == 0) {
             handleUpload(new_socket);
-        } else if (command == "DOWNLOAD") {
+        } else if (strcmp(command, "DOWNLOAD") == 0) {
             handleDownload(new_socket);
-        } else if (command == "DELETE_FILE") {
-            handleDelete(new_socket);
-        } else if (command == "GET_FILE_LIST") {
-            handleListFiles(new_socket);
-        } else if (command == "SEARCH_FILE") {
+        } else if (strcmp(command, "GET_FILE_LIST") == 0) {
+            handleFileList(new_socket);
+        } else if (strcmp(command, "SEARCH_FILE") == 0) {
             handleSearchFile(new_socket);
+        } else if (strcmp(command, "DELETE_FILE") == 0) {
+            handleDeleteFile(new_socket);
         } else {
-            std::cerr << "Unknown command received\n";
+            std::cerr << "Unknown command received: " << command << "\n";
         }
 
-        // Close the client socket
         close(new_socket);
     }
 
-    // Close the server socket
     close(server_fd);
     return 0;
 }
