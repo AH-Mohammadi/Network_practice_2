@@ -110,3 +110,13 @@ int main() {
     }
 
     // Example usage
+    uploadFile(sock, "example.txt");  // Upload a file
+    downloadFile(sock, "example.txt"); // Download the file
+    deleteFile(sock, "example.txt");   // Delete the file
+    listFiles(sock);                    // List files on the server
+    searchFile(sock, "example.txt");    // Search for a file
+
+    // Close the socket
+    close(sock);
+    return 0;
+}
