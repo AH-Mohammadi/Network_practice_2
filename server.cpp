@@ -4,8 +4,8 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <fstream>
-#include <dirent.h>  // For directory operations
 #include <vector>
+#include <dirent.h>
 
 #define PORT 8080
 
@@ -22,10 +22,12 @@ void handleClient(int client_socket) {
 
         if (command == "UPLOAD") {
             // Handle file upload
+            // Receive the filename
             read(client_socket, buffer, sizeof(buffer));
             std::string filename(buffer);
             std::ofstream outfile(filename, std::ios::binary);
 
+            // Read the file content
             while ((bytes_read = read(client_socket, buffer, sizeof(buffer))) > 0) {
                 outfile.write(buffer, bytes_read);
             }
@@ -53,7 +55,7 @@ void handleClient(int client_socket) {
             // Handle file deletion
             read(client_socket, buffer, sizeof(buffer));
             std::string filename(buffer);
-            if (std::remove(filename.c_str()) == 0) {
+            if (remove(filename.c_str()) == 0) {
                 std::cout << "Deleted file: " << filename << "\n";
                 send(client_socket, "File deleted successfully", 25, 0);
             } else {
@@ -62,25 +64,25 @@ void handleClient(int client_socket) {
         } else if (command == "GET_FILE_LIST") {
             // List files in the current directory
             std::string fileList = "Files:\n";
-            struct dirent *entry;
-            DIR *dp = opendir(".");
-            if (dp == nullptr) {
-                std::cerr << "Could not open directory\n";
-                return;
-            }
-            while ((entry = readdir(dp))) {
-                if (entry->d_type == DT_REG) { // Only regular files
-                    fileList += entry->d_name;
-                    fileList += "\n";
+            DIR *dir;
+            struct dirent *ent;
+
+            if ((dir = opendir(".")) != nullptr) {
+                while ((ent = readdir(dir)) != nullptr) {
+                    if (ent->d_type == DT_REG) { // Check if it's a regular file
+                        fileList += std::string(ent->d_name) + "\n";
+                    }
                 }
+                closedir(dir);
+            } else {
+                perror("Could not open directory");
             }
-            closedir(dp);
             send(client_socket, fileList.c_str(), fileList.length(), 0);
         } else if (command == "SEARCH_FILE") {
             // Handle file search
             read(client_socket, buffer, sizeof(buffer));
             std::string filename(buffer);
-            if (access(filename.c_str(), F_OK) == 0) {
+            if (access(filename.c_str(), F_OK) != -1) {
                 send(client_socket, "File found", 10, 0);
             } else {
                 send(client_socket, "File not found", 14, 0);
