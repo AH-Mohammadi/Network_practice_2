@@ -3,8 +3,6 @@
 #include <cstring>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <vector>
-#include <filesystem>
 
 #define PORT 8080
 
@@ -111,4 +109,4 @@ int main() {
         return -1;
     }
 
-    uploadFile(sock, "example.txt");  // Upload a file
+    // Example usage
