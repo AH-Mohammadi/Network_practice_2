@@ -4,6 +4,9 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <dirent.h>
 
 #define PORT 8080
 
@@ -46,8 +49,15 @@ void downloadFile(int sock) {
     send(sock, "DOWNLOAD", strlen("DOWNLOAD"), 0);
     send(sock, filename, strlen(filename), 0);
 
+    // Create a download directory if it doesn't exist
+    const char* downloadDir = "download";
+    struct stat st;
+    if (stat(downloadDir, &st) == -1) {
+        mkdir(downloadDir, 0700);
+    }
+
     // Prepare the new filename for download
-    std::string newFilename = "downloaded_" + std::string(filename);
+    std::string newFilename = std::string(downloadDir) + "/downloaded_" + std::string(filename);
 
     // Open a file to save the downloaded content
     std::ofstream outfile(newFilename, std::ios::binary);
